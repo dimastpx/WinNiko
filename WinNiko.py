@@ -16,30 +16,35 @@ class NikoWindow(QWidget):
             Qt.Tool
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.resize(100, 100)
+        
+        self.fixed_size = 100
+        self.setFixedSize(self.fixed_size, self.fixed_size)
 
         self.label = QLabel(self)
         self.label.setAlignment(Qt.AlignCenter)
+        self.label.setFixedSize(self.fixed_size, self.fixed_size)
 
-        self.frames = {
-            'idle': self._load_png_frames('idle', 4),
-            'walk': self._load_png_frames('walk', 1),
+        # Загружаем медиа для каждого состояния
+        self.media = {
+            'idle': self._load_media('idle'),
+            'walk': self._load_media('walk'),
+            'drag': self._load_media('drag'),
         }
-
-        self.drag_movie = self._try_load_gif('drag')
-        if self.drag_movie is None:
-            self.frames['drag'] = self._load_png_frames('drag', 1)
 
         self.current_state = 'idle'
         self.current_frame_index = 0
 
         self.anim_timer = QTimer(self)
-        self.anim_timer.timeout.connect(self.next_frame)
+        self.anim_timer.timeout.connect(self.update_display)
         self.anim_timer.start(80)
 
         self.walk_timer = QTimer(self)
         self.walk_timer.timeout.connect(self.update_walking)
         self.walk_timer.start(50)
+
+        self.idle_wait_timer = QTimer(self)
+        self.idle_wait_timer.timeout.connect(self.finish_idle_wait)
+        self.idle_wait_timer.setSingleShot(True)
 
         self.target_pos = None
         self.speed = 3
@@ -48,72 +53,65 @@ class NikoWindow(QWidget):
         self.dragging = False
         self.drag_offset = QPoint()
 
-        self.update_image()
+        self.update_display()
         self.pick_new_target()
 
-    def _load_png_frames(self, state_name, count):
-        frames = []
-        for i in range(1, count + 1):
-            path = f"images/{state_name}/{state_name}_{i}.png"
-            pix = QPixmap(path)
-            if pix.isNull():
-                print(f"Warning: failed to load {path}")
-                pix = QPixmap(100, 100)
-                pix.fill(Qt.transparent)
-            frames.append(pix)
-        return frames
+    def _load_media(self, state_name):
+        """Загружает медиа для состояния. GIF в приоритете."""
+        gif_path = f"{state_name}.gif"
+        static_path = f"{state_name}.png"
+        
+        if os.path.exists(gif_path):
+            movie = QMovie(gif_path)
+            if movie.isValid():
+                movie.frameChanged.connect(self._on_media_changed)
+                return {'type': 'gif', 'data': movie}
+            else:
+                print(f"Warning: invalid GIF: {gif_path}")
+        
+        if os.path.exists(static_path):
+            pix = QPixmap(static_path)
+            if not pix.isNull():
+                return {'type': 'pixmap', 'data': pix}
+            else:
+                print(f"Warning: failed to load {static_path}")
+        
+        pix = QPixmap(self.fixed_size, self.fixed_size)
+        pix.fill(Qt.transparent)
+        return {'type': 'pixmap', 'data': pix}
 
-    def _try_load_gif(self, state_name):
-        path = f"images/{state_name}/{state_name}.gif"
-        if not os.path.exists(path):
-            return None
-        movie = QMovie(path)
-        if not movie.isValid():
-            print(f"Warning: invalid GIF: {path}")
-            return None
-        movie.frameChanged.connect(self._on_gif_frame_changed)
-        return movie
+    def _on_media_changed(self, _frame_number):
+        """Callback для обновления GIF кадров"""
+        self.update_display()
 
-    def _on_gif_frame_changed(self, _frame_number):
-        if self.current_state == 'drag' and self.drag_movie:
-            pix = self.drag_movie.currentPixmap()
-            self.label.setPixmap(pix)
-            self.label.resize(pix.size())
-            self.resize(pix.size())
-
-    def update_image(self):
-        if self.current_state == 'drag' and self.drag_movie:
-            return
-        pix = self.frames[self.current_state][self.current_frame_index]
-        self.label.setPixmap(pix)
-        self.resize(pix.size())
-        self.label.resize(pix.size())
-
-    def next_frame(self):
-        if self.current_state == 'drag' and self.drag_movie:
-            return
-        frames = self.frames[self.current_state]
-        self.current_frame_index = (self.current_frame_index + 1) % len(frames)
-        self.update_image()
+    def update_display(self):
+        """Отображает текущее медиа"""
+        media = self.media[self.current_state]
+        
+        if media['type'] == 'gif':
+            pix = media['data'].currentPixmap()
+        else:
+            pix = media['data']
+        
+        # Масштабируем чтобы полностью заполнить 100x100
+        scaled_pix = pix.scaled(self.fixed_size, self.fixed_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.label.setPixmap(scaled_pix)
 
     def set_state(self, state):
         if state == self.current_state:
             return
 
-        if self.current_state == 'drag' and self.drag_movie:
-            self.drag_movie.stop()
+        # Останавливаем старый GIF если был
+        if self.media[self.current_state]['type'] == 'gif':
+            self.media[self.current_state]['data'].stop()
 
         self.current_state = state
-        self.current_frame_index = 0
 
-        if state == 'drag' and self.drag_movie:
-            self.drag_movie.start()
-            pix = self.drag_movie.currentPixmap()
-            self.label.setPixmap(pix)
-            self.label.resize(pix.size())
-            self.resize(pix.size())
-        else:
-            self.update_image()
+        # Запускаем новый GIF если нужен
+        if self.media[state]['type'] == 'gif':
+            self.media[state]['data'].start()
+        
+        self.update_display()
 
     def pick_new_target(self):
         margin = 50
@@ -157,7 +155,11 @@ class NikoWindow(QWidget):
         if event.button() == Qt.LeftButton and self.dragging:
             self.dragging = False
             self.set_state('idle')
-            self.pick_new_target()
+            self.idle_wait_timer.start(2000)  # Ждем 2 секунды перед тем как продолжить
+
+    def finish_idle_wait(self):
+        """Вызывается после ожидания 2 секунды"""
+        self.pick_new_target()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
