@@ -5,6 +5,12 @@ from PyQt5.QtWidgets import QWidget, QApplication, QLabel
 from PyQt5.QtCore import Qt, QTimer, QPoint
 from PyQt5.QtGui import QPixmap, QMovie
 
+# Определяем базовую директорию для поиска файлов
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 class NikoWindow(QWidget):
     def __init__(self):
@@ -59,8 +65,8 @@ class NikoWindow(QWidget):
 
     def _load_media(self, state_name):
         """Загружает медиа для состояния. GIF в приоритете."""
-        gif_path = f"{state_name}.gif"
-        static_path = f"{state_name}.png"
+        gif_path = os.path.join(BASE_DIR, f"{state_name}.gif")
+        static_path = os.path.join(BASE_DIR, f"{state_name}.png")
         
         if os.path.exists(gif_path):
             movie = QMovie(gif_path)
