@@ -31,6 +31,7 @@ class NikoWindow(QWidget):
             'drag': self._load_media('drag'),
         }
 
+
         self.current_state = 'idle'
         self.current_frame_index = 0
 
